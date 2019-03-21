@@ -316,6 +316,7 @@ func (pm *ProtocolManager) handle(p *peer) error {
 			return err
 		}
 	}
+	p.Peer.MessageHandlingStarted()
 	// Handle incoming messages until the connection is torn down
 	for {
 		if err := pm.handleMsg(p); err != nil {

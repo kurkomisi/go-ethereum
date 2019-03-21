@@ -134,46 +134,43 @@ export const inserter = (sampleLimit: number) => (update: NetworkType, prev: Net
 					if (!peer.maxEgress) {
 						setEgressChartAttributes(peer);
 					}
+					if (!peer.name) {
+						peer.name = '';
+					}
+					if (!peer.enode) {
+						peer.enode = '';
+					}
 				});
 			}
 		});
 	}
 	if (Array.isArray(update.diff)) {
 		update.diff.forEach((event: PeerEvent) => {
-			if (!event.ip) {
-				console.error('Peer event without IP', event);
+			if (!event.addr) {
+				console.error('Peer event without TCP address', event);
 				return;
 			}
 			switch (event.remove) {
 			case 'bundle': {
-				delete prev.peers.bundles[event.ip];
+				delete prev.peers.bundles[event.addr];
 				return;
 			}
 			case 'known': {
 				if (!event.id) {
-					console.error('Remove known peer event without ID', event.ip);
+					console.error('Remove known peer event without ID', event.addr);
 					return;
 				}
-				const bundle = prev.peers.bundles[event.ip];
+				const bundle = prev.peers.bundles[event.addr];
 				if (!bundle || !bundle.knownPeers || !bundle.knownPeers[event.id]) {
-					console.error('No known peer to remove', event.ip, event.id);
+					console.error('No known peer to remove', event.addr, event.id);
 					return;
 				}
 				delete bundle.knownPeers[event.id];
 				return;
 			}
-			case 'attempt': {
-				const bundle = prev.peers.bundles[event.ip];
-				if (!bundle || !Array.isArray(bundle.attempts) || bundle.attempts.length < 1) {
-					console.error('No unknown peer to remove', event.ip);
-					return;
-				}
-				bundle.attempts.splice(0, 1);
-				return;
 			}
-			}
-			if (!prev.peers.bundles[event.ip]) {
-				prev.peers.bundles[event.ip] = {
+			if (!prev.peers.bundles[event.addr]) {
+				prev.peers.bundles[event.addr] = {
 					location: {
 						country:   '',
 						city:      '',
@@ -181,22 +178,16 @@ export const inserter = (sampleLimit: number) => (update: NetworkType, prev: Net
 						longitude: 0,
 					},
 					knownPeers: {},
-					attempts:   [],
+					attempts:   0,
 				};
 			}
-			const bundle = prev.peers.bundles[event.ip];
+			const bundle = prev.peers.bundles[event.addr];
 			if (event.location) {
 				bundle.location = event.location;
 				return;
 			}
 			if (!event.id) {
-				if (!bundle.attempts) {
-					bundle.attempts = [];
-				}
-				bundle.attempts.push({
-					connected:    event.connected,
-					disconnected: event.disconnected,
-				});
+				bundle.attempts++;
 				return;
 			}
 			if (!bundle.knownPeers) {
@@ -209,9 +200,21 @@ export const inserter = (sampleLimit: number) => (update: NetworkType, prev: Net
 					ingress:      [],
 					egress:       [],
 					active:       false,
+					name:         '',
+					enode:        '',
+					protocols:    {},
 				};
 			}
 			const peer = bundle.knownPeers[event.id];
+			if (event.name) {
+				peer.name = event.name;
+			}
+			if (event.enode) {
+				peer.enode = event.enode;
+			}
+			if (event.protocols) {
+				peer.protocols = event.protocols;
+			}
 			if (!peer.maxIngress) {
 				setIngressChartAttributes(peer);
 			}
@@ -358,12 +361,12 @@ class Network extends Component<Props, State> {
 		});
 	};
 
-	peerTableRow = (ip, id, bundle, peer) => {
+	peerTableRow = (addr, id, bundle, peer) => {
 		const ingressValues = peer.ingress.map(({value}) => ({ingress: value || 0.001}));
 		const egressValues = peer.egress.map(({value}) => ({egress: -value || -0.001}));
 
 		return (
-			<TableRow key={`known_${ip}_${id}`} style={styles.tableRow}>
+			<TableRow key={`known_${addr}_${id}`} style={styles.tableRow}>
 				<TableCell style={styles.tableCell}>
 					{peer.active
 						? <FontAwesomeIcon icon={fasCircle} color='green' />
@@ -385,14 +388,14 @@ class Network extends Component<Props, State> {
 						height={trafficChartHeight}
 						data={ingressValues}
 						margin={{top: 5, right: 5, bottom: 0, left: 5}}
-						syncId={`peerIngress_${ip}_${id}`}
+						syncId={`peerIngress_${addr}_${id}`}
 					>
 						<defs>
-							<linearGradient id={`ingressGradient_${ip}_${id}`} x1='0' y1='1' x2='0' y2='0'>
+							<linearGradient id={`ingressGradient_${addr}_${id}`} x1='0' y1='1' x2='0' y2='0'>
 								{peer.ingressGradient
 								&& peer.ingressGradient.map(({offset, color}, i) => (
 									<stop
-										key={`ingressStop_${ip}_${id}_${i}`}
+										key={`ingressStop_${addr}_${id}_${i}`}
 										offset={`${offset}%`}
 										stopColor={color}
 									/>
@@ -405,7 +408,7 @@ class Network extends Component<Props, State> {
 							dataKey='ingress'
 							isAnimationActive={false}
 							type='monotone'
-							fill={`url(#ingressGradient_${ip}_${id})`}
+							fill={`url(#ingressGradient_${addr}_${id})`}
 							stroke={peer.ingressGradient[peer.ingressGradient.length - 1].color}
 							strokeWidth={chartStrokeWidth}
 						/>
@@ -415,14 +418,14 @@ class Network extends Component<Props, State> {
 						height={trafficChartHeight}
 						data={egressValues}
 						margin={{top: 0, right: 5, bottom: 5, left: 5}}
-						syncId={`peerIngress_${ip}_${id}`}
+						syncId={`peerIngress_${addr}_${id}`}
 					>
 						<defs>
-							<linearGradient id={`egressGradient_${ip}_${id}`} x1='0' y1='1' x2='0' y2='0'>
+							<linearGradient id={`egressGradient_${addr}_${id}`} x1='0' y1='1' x2='0' y2='0'>
 								{peer.egressGradient
 								&& peer.egressGradient.map(({offset, color}, i) => (
 									<stop
-										key={`egressStop_${ip}_${id}_${i}`}
+										key={`egressStop_${addr}_${id}_${i}`}
 										offset={`${offset}%`}
 										stopColor={color}
 									/>
@@ -435,12 +438,14 @@ class Network extends Component<Props, State> {
 							dataKey='egress'
 							isAnimationActive={false}
 							type='monotone'
-							fill={`url(#egressGradient_${ip}_${id})`}
+							fill={`url(#egressGradient_${addr}_${id})`}
 							stroke={peer.egressGradient[0].color}
 							strokeWidth={chartStrokeWidth}
 						/>
 					</AreaChart>
 				</TableCell>
+				<TableCell style={styles.tableCell}>{peer.name.substring(0, 15)}</TableCell>
+				<TableCell style={styles.tableCell}>{JSON.stringify(peer.protocols)}</TableCell>
 			</TableRow>
 		);
 	};
@@ -456,10 +461,12 @@ class Network extends Component<Props, State> {
 								<TableCell style={styles.tableCell}>Node ID</TableCell>
 								<TableCell style={styles.tableCell}>Location</TableCell>
 								<TableCell style={styles.tableCell}>Traffic</TableCell>
+								<TableCell style={styles.tableCell}>Name</TableCell>
+								<TableCell style={styles.tableCell}>Protocols</TableCell>
 							</TableRow>
 						</TableHead>
 						<TableBody>
-							{Object.entries(this.props.content.peers.bundles).map(([ip, bundle]) => {
+							{Object.entries(this.props.content.peers.bundles).map(([addr, bundle]) => {
 								if (!bundle.knownPeers || Object.keys(bundle.knownPeers).length < 1) {
 									return null;
 								}
@@ -467,12 +474,12 @@ class Network extends Component<Props, State> {
 									if (peer.active === false) {
 										return null;
 									}
-									return this.peerTableRow(ip, id, bundle, peer);
+									return this.peerTableRow(addr, id, bundle, peer);
 								});
 							})}
 						</TableBody>
 						<TableBody>
-							{Object.entries(this.props.content.peers.bundles).map(([ip, bundle]) => {
+							{Object.entries(this.props.content.peers.bundles).map(([addr, bundle]) => {
 								if (!bundle.knownPeers || Object.keys(bundle.knownPeers).length < 1) {
 									return null;
 								}
@@ -480,7 +487,7 @@ class Network extends Component<Props, State> {
 									if (peer.active === true) {
 										return null;
 									}
-									return this.peerTableRow(ip, id, bundle, peer);
+									return this.peerTableRow(addr, id, bundle, peer);
 								});
 							})}
 						</TableBody>
@@ -493,19 +500,19 @@ class Network extends Component<Props, State> {
 					<Table>
 						<TableHead style={styles.tableHead}>
 							<TableRow style={styles.tableRow}>
-								<TableCell style={styles.tableCell}>IP</TableCell>
+								<TableCell style={styles.tableCell}>TCP address</TableCell>
 								<TableCell style={styles.tableCell}>Location</TableCell>
 								<TableCell style={styles.tableCell}>Nr</TableCell>
 							</TableRow>
 						</TableHead>
 						<TableBody>
-							{Object.entries(this.props.content.peers.bundles).map(([ip, bundle]) => {
-								if (!bundle.attempts || bundle.attempts.length < 1) {
+							{Object.entries(this.props.content.peers.bundles).map(([addr, bundle]) => {
+								if (!bundle.attempts || bundle.attempts < 1) {
 									return null;
 								}
 								return (
-									<TableRow key={`attempt_${ip}`} style={styles.tableRow}>
-										<TableCell style={styles.tableCell}>{ip}</TableCell>
+									<TableRow key={`attempt_${addr}`} style={styles.tableRow}>
+										<TableCell style={styles.tableCell}>{addr}</TableCell>
 										<TableCell style={styles.tableCell}>
 											{bundle.location ? (() => {
 												const l = bundle.location;
@@ -513,7 +520,7 @@ class Network extends Component<Props, State> {
 											})() : ''}
 										</TableCell>
 										<TableCell style={styles.tableCell}>
-											{Object.values(bundle.attempts).length}
+											{bundle.attempts}
 										</TableCell>
 									</TableRow>
 								);

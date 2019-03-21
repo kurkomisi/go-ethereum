@@ -54,8 +54,9 @@ const themeStyles = (theme: Object) => ({
 });
 
 export type Props = {
-	classes: Object, // injected by withStyles()
+	classes:       Object, // injected by withStyles()
 	switchSideBar: () => void,
+	syncMode:      string,
 };
 
 // Header renders the header of the dashboard.
@@ -71,6 +72,9 @@ class Header extends Component<Props> {
 					</IconButton>
 					<Typography type='title' color='inherit' noWrap className={classes.title}>
 						Go Ethereum Dashboard
+					</Typography>
+					<Typography style={{paddingLeft: 50}}>
+						sync mode: {this.props.syncMode}
 					</Typography>
 				</Toolbar>
 			</AppBar>

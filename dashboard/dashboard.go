@@ -27,13 +27,12 @@ package dashboard
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/eth/downloader"
+	"io"
 	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
-
-	"io"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -67,6 +66,11 @@ type Dashboard struct {
 
 	quit chan chan error // Channel used for graceful exit
 	wg   sync.WaitGroup  // Wait group used to close the data collector threads
+
+	peerEventBridge      chan p2p.MeteredPeerEvent // Channel for the initial peer events.
+	closePeerEventBridge chan struct{}             // Channel to signal, that the initial peer event collection can be stopped.
+
+	syncMode downloader.SyncMode
 }
 
 // client represents active websocket connection with a remote browser.
@@ -77,8 +81,32 @@ type client struct {
 }
 
 // New creates a new dashboard instance with the given configuration.
-func New(config *Config, commit string, logdir string) *Dashboard {
-	now := time.Now()
+func New(config *Config, syncMode downloader.SyncMode, commit string, logdir string) *Dashboard {
+	// There is a data race between the network layer and the dashboard, which
+	// can cause some lost peer events, therefore some peers might not appear
+	// on the dashboard.
+	// In order to solve this problem, a peer event subscription is registered
+	// before the network layer starts, and when the dashboard is ready, the
+	// stored events are passed to it.
+	peerEventBridge := make(chan p2p.MeteredPeerEvent, 1000) // The events are stored by and passed through this channel.
+	closePeerEventBridge := make(chan struct{})              // This channel gets a signal from the dashboard when it is ready.
+	go func() {
+		peerCh := make(chan p2p.MeteredPeerEvent, 200)   // Channel for the initial peer events.
+		subPeer := p2p.SubscribeMeteredPeerEvent(peerCh) // Subscribe to the peer events.
+		for {
+			select {
+			case event := <-peerCh:
+				select {
+				case peerEventBridge <- event:
+				default:
+					log.Warn("Too many peer events before the dashboard starts")
+				}
+			case <-closePeerEventBridge:
+				subPeer.Unsubscribe()
+				return
+			}
+		}
+	}()
 	versionMeta := ""
 	if len(params.VersionMeta) > 0 {
 		versionMeta = fmt.Sprintf(" (%s)", params.VersionMeta)
@@ -89,26 +117,30 @@ func New(config *Config, commit string, logdir string) *Dashboard {
 		quit:   make(chan chan error),
 		history: &Message{
 			General: &GeneralMessage{
-				Commit:  commit,
-				Version: fmt.Sprintf("v%d.%d.%d%s", params.VersionMajor, params.VersionMinor, params.VersionPatch, versionMeta),
+				Commit:   commit,
+				Version:  fmt.Sprintf("v%d.%d.%d%s", params.VersionMajor, params.VersionMinor, params.VersionPatch, versionMeta),
+				SyncMode: syncMode.String(),
 			},
 			System: &SystemMessage{
-				ActiveMemory:   emptyChartEntries(now, sampleLimit),
-				VirtualMemory:  emptyChartEntries(now, sampleLimit),
-				NetworkIngress: emptyChartEntries(now, sampleLimit),
-				NetworkEgress:  emptyChartEntries(now, sampleLimit),
-				ProcessCPU:     emptyChartEntries(now, sampleLimit),
-				SystemCPU:      emptyChartEntries(now, sampleLimit),
-				DiskRead:       emptyChartEntries(now, sampleLimit),
-				DiskWrite:      emptyChartEntries(now, sampleLimit),
+				ActiveMemory:   emptyChartEntries(sampleLimit),
+				VirtualMemory:  emptyChartEntries(sampleLimit),
+				NetworkIngress: emptyChartEntries(sampleLimit),
+				NetworkEgress:  emptyChartEntries(sampleLimit),
+				ProcessCPU:     emptyChartEntries(sampleLimit),
+				SystemCPU:      emptyChartEntries(sampleLimit),
+				DiskRead:       emptyChartEntries(sampleLimit),
+				DiskWrite:      emptyChartEntries(sampleLimit),
 			},
 		},
-		logdir: logdir,
+		logdir:               logdir,
+		peerEventBridge:      peerEventBridge,
+		closePeerEventBridge: closePeerEventBridge,
+		syncMode:             syncMode,
 	}
 }
 
 // emptyChartEntries returns a ChartEntry array containing limit number of empty samples.
-func emptyChartEntries(t time.Time, limit int) ChartEntries {
+func emptyChartEntries(limit int) ChartEntries {
 	ce := make(ChartEntries, limit)
 	for i := 0; i < limit; i++ {
 		ce[i] = new(ChartEntry)

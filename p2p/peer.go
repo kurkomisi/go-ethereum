@@ -474,3 +474,11 @@ func (p *Peer) Info() *PeerInfo {
 	}
 	return info
 }
+
+// MessageHandlingStarted is called by the protocol manager's peer handler
+// after the sub-protocol handshake is done and the peer is registered locally.
+func (p *Peer) MessageHandlingStarted() {
+	if conn, ok := p.rw.fd.(*meteredConn); ok {
+		conn.peerMessageHandlingStarted(p.Info().Protocols)
+	}
+}

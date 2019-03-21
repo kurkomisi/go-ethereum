@@ -313,7 +313,7 @@ func (pm *ProtocolManager) handle(p *peer) error {
 			pm.serverPool.registered(p.poolEntry)
 		}
 	}
-
+	p.Peer.MessageHandlingStarted()
 	// main loop. handle incoming messages.
 	for {
 		if err := pm.handleMsg(p); err != nil {
